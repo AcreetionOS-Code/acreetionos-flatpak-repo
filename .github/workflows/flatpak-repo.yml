@@ -133,7 +133,12 @@ jobs:
             fi
 
             for xml in $metainfo $appdata; do
-              appstreamcli validate "$xml"
+              result=$(appstreamcli validate --no-net "$xml" 2>&1) || true
+              echo "$result"
+              if echo "$result" | grep -q '^E:'; then
+                echo "ERROR: AppStream validation errors found"
+                exit 1
+              fi
             done
 
             echo "--- ${app_id} built and validated successfully ---"

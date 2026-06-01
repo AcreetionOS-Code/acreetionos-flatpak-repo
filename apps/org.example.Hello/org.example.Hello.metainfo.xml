@@ -6,13 +6,16 @@
   <name>Hello</name>
   <summary>A simple hello world application</summary>
   <description>
-    <p>A demonstration Flatpak application for the AcreetionOS Flatpak repository.</p>
+    <p>A demonstration Flatpak application for the AcreetionOS Flatpak repository. This application prints a greeting to standard output.</p>
   </description>
-  <launchable type="desktop-id">org.example.Hello.desktop</launchable>
+  <provides>
+    <binary>hello.sh</binary>
+  </provides>
   <url type="homepage">https://github.com/spivanatalie64/acreetionos-flatpak-repo</url>
-  <developer id="acreetionos">
+  <developer id="org.example">
     <name>AcreetionOS</name>
   </developer>
+  <content_rating type="oars-1.1" />
   <releases>
     <release version="1.0.0" date="2026-06-01">
       <description>
