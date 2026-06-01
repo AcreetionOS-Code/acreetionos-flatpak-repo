@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="console-application">
+  <id>org.example.Hello</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Hello</name>
+  <summary>A simple hello world application</summary>
+  <description>
+    <p>A demonstration Flatpak application for the AcreetionOS Flatpak repository.</p>
+  </description>
+  <launchable type="desktop-id">org.example.Hello.desktop</launchable>
+  <url type="homepage">https://github.com/spivanatalie64/acreetionos-flatpak-repo</url>
+  <developer id="acreetionos">
+    <name>AcreetionOS</name>
+  </developer>
+  <releases>
+    <release version="1.0.0" date="2026-06-01">
+      <description>
+        <p>Initial release</p>
+      </description>
+    </release>
+  </releases>
+</component>

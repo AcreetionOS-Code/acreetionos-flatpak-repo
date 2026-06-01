@@ -9,7 +9,8 @@
       "name": "hello",
       "buildsystem": "simple",
       "build-commands": [
-        "install -Dm755 hello.sh /app/bin/hello.sh"
+        "install -Dm755 hello.sh /app/bin/hello.sh",
+        "install -Dm644 org.example.Hello.metainfo.xml /app/share/metainfo/org.example.Hello.metainfo.xml"
       ],
       "sources": [
         {
@@ -18,6 +19,10 @@
           "commands": [
             "echo 'Hello from AcreetionOS Flatpak!'"
           ]
+        },
+        {
+          "type": "file",
+          "path": "org.example.Hello.metainfo.xml"
         }
       ]
     }
