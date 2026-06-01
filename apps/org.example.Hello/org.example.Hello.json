@@ -1,0 +1,30 @@
+{
+  "app-id": "org.example.Hello",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "24.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "hello.sh",
+  "modules": [
+    {
+      "name": "hello",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm755 hello.sh /app/bin/hello.sh"
+      ],
+      "sources": [
+        {
+          "type": "script",
+          "dest-filename": "hello.sh",
+          "commands": [
+            "echo 'Hello from AcreetionOS Flatpak!'"
+          ]
+        }
+      ]
+    }
+  ],
+  "finish-args": [
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--share=ipc"
+  ]
+}

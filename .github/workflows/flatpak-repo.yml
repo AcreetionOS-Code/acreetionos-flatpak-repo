@@ -1,0 +1,188 @@
+name: Build Flatpak Repository
+
+on:
+  push:
+    paths:
+      - 'apps/**/*.json'
+      - 'apps/**/*.yml'
+      - 'apps/**/*.yaml'
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      app_id:
+        description: 'Specific app-id to rebuild (leave empty for all changed)'
+        required: false
+        type: string
+
+concurrency:
+  group: flatpak-repo
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  REPO_DIR: /tmp/flatpak-repo
+  BUILD_DIR: /tmp/flatpak-build
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout manifests
+        uses: actions/checkout@v4
+        with:
+          path: source
+
+      - name: Install Flatpak toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq flatpak flatpak-builder ostree appstream jq
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Clone OSTree repository (gh-pages)
+        id: clone-repo
+        run: |
+          if git clone --branch gh-pages --depth 1 \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+            "$REPO_DIR" 2>/dev/null; then
+            echo "EXISTING=true" >> "$GITHUB_OUTPUT"
+            echo "Cloned existing gh-pages branch"
+          else
+            echo "EXISTING=false" >> "$GITHUB_OUTPUT"
+            mkdir -p "$REPO_DIR"
+            cd "$REPO_DIR"
+            git init
+            git checkout -b gh-pages
+            ostree --repo=. init --mode=archive
+            echo "Initialized new OSTree repository"
+          fi
+
+      - name: Find manifests to build
+        id: manifests
+        working-directory: source
+        run: |
+          if [ -n "${{ github.event.inputs.app_id }}" ]; then
+            APP_DIR="${{ github.event.inputs.app_id }}"
+            MANIFEST=$(find "apps/$APP_DIR" -maxdepth 1 \( -name '*.json' -o -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | head -1)
+            if [ -z "$MANIFEST" ]; then
+              echo "ERROR: No manifest found for app-id '$APP_DIR'" >&2
+              exit 1
+            fi
+            echo "files=[\"$MANIFEST\"]" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            BEFORE="${{ github.event.before }}"
+            if ! git cat-file -e "$BEFORE" 2>/dev/null; then
+              BEFORE=$(git rev-list --max-parents=0 HEAD)
+            fi
+            CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}" -- apps/ | grep -E '\.(json|yml|yaml)$' || true)
+            if [ -z "$CHANGED" ]; then
+              echo "No manifest changes detected"
+              echo "files=[]" >> "$GITHUB_OUTPUT"
+            else
+              echo "files=$(echo "$CHANGED" | jq -R -s -c 'split("\n")[:-1]')" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            ALL=$(find apps/ \( -name '*.json' -o -name '*.yml' -o -name '*.yaml' \) | sort)
+            echo "files=$(echo "$ALL" | jq -R -s -c 'split("\n")[:-1]')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import GPG signing key
+        if: success() && fromJson(steps.manifests.outputs.files)[0] != null
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 -d | gpg --batch --import
+          echo "GPG_KEY_ID=${{ secrets.GPG_KEY_ID }}" >> "$GITHUB_ENV"
+
+      - name: Build and export applications
+        if: success() && fromJson(steps.manifests.outputs.files)[0] != null
+        run: |
+          set -euo pipefail
+
+          MANIFESTS='${{ steps.manifests.outputs.files }}'
+          echo "$MANIFESTS" | jq -r '.[]' | while read -r manifest; do
+            app_id=$(basename "$(dirname "$manifest")")
+            build_dir="${BUILD_DIR}/${app_id}"
+
+            echo "--- Building: ${app_id} from ${manifest} ---"
+
+            rm -rf "$build_dir"
+            flatpak-builder \
+              --force-clean \
+              --user \
+              --disable-rofiles-fuse \
+              --install-deps-from=flathub \
+              --repo="$REPO_DIR" \
+              "$build_dir" \
+              "source/$manifest"
+
+            echo "--- Linting AppStream metadata for ${app_id} ---"
+
+            metainfo=$(find "$build_dir/files/share/metainfo" -name '*.xml' 2>/dev/null || true)
+            appdata=$(find "$build_dir/files/share/appdata" -name '*.xml' 2>/dev/null || true)
+
+            if [ -z "$metainfo" ] && [ -z "$appdata" ]; then
+              echo "ERROR: No AppStream metadata found in ${app_id} build output"
+              echo "  Expected: files/share/metainfo/${app_id}.metainfo.xml"
+              echo "  Expected: files/share/appdata/${app_id}.appdata.xml"
+              exit 1
+            fi
+
+            for xml in $metainfo $appdata; do
+              appstreamcli validate "$xml"
+            done
+
+            echo "--- ${app_id} built and validated successfully ---"
+          done
+
+          rm -rf "${BUILD_DIR}"
+
+      - name: Update repository summary and sign
+        if: success() && fromJson(steps.manifests.outputs.files)[0] != null
+        run: |
+          flatpak build-update-repo \
+            --gpg-sign="${{ env.GPG_KEY_ID }}" \
+            --generate-static-deltas \
+            --prune \
+            "$REPO_DIR"
+
+      - name: Generate .flatpakrepo
+        if: success() && fromJson(steps.manifests.outputs.files)[0] != null
+        run: |
+          REPO_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          GPG_BASE64="${{ secrets.GPG_PUBLIC_KEY_BASE64 }}"
+
+          cat > "$REPO_DIR/.flatpakrepo" << FLATPAKREPO
+          [Flatpak Repo]
+          Title=${{ github.event.repository.name }} (Flatpak)
+          Url=${REPO_URL}/
+          Homepage=https://github.com/${{ github.repository }}
+          Comment=Community Flatpak repository for ${{ github.repository_owner }}
+          Description=Automatically built Flatpak applications from ${{ github.repository }}. All builds pass AppStream validation before publication.
+          GPGKey=${GPG_BASE64}
+          FLATPAKREPO
+
+      - name: Deploy to GitHub Pages
+        if: success() && fromJson(steps.manifests.outputs.files)[0] != null
+        run: |
+          cd "$REPO_DIR"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "build: update repository ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+            git push origin gh-pages
+            echo "Deployed to GitHub Pages"
+          fi
+
+      - name: Log build summary
+        if: always()
+        run: |
+          MANIFESTS='${{ steps.manifests.outputs.files }}'
+          echo "Build complete. Processed manifests:"
+          echo "$MANIFESTS" | jq -r '.[]' | sed 's/^/  - /'
