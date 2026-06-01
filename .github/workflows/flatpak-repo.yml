@@ -49,16 +49,18 @@ jobs:
           if git clone --branch gh-pages --depth 1 \
             "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
             "$REPO_DIR" 2>/dev/null; then
-            echo "EXISTING=true" >> "$GITHUB_OUTPUT"
             echo "Cloned existing gh-pages branch"
+            if [ ! -d "$REPO_DIR/objects" ]; then
+              echo "OSTree repo incomplete (empty dirs not tracked by git), reinitializing"
+              rm -f "$REPO_DIR/config"
+              ostree --repo="$REPO_DIR" init --mode=archive
+            fi
           else
-            echo "EXISTING=false" >> "$GITHUB_OUTPUT"
+            echo "No existing gh-pages branch, initializing new OSTree repository"
             mkdir -p "$REPO_DIR"
             cd "$REPO_DIR"
-            git init
-            git checkout -b gh-pages
+            git init -b gh-pages
             ostree --repo=. init --mode=archive
-            echo "Initialized new OSTree repository"
           fi
 
       - name: Find manifests to build
